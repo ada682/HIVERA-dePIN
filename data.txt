@@ -1,0 +1,24 @@
+{
+    "accounts": [
+        {
+            "username": "",
+            "authData": "",
+            "proxy": null
+        },
+        {
+            "username": "",
+            "authData": "",
+            "proxy": "104.07.7.175:3128"
+        },
+        {
+            "username": "",
+            "authData": "",
+            "proxy": "156.23.69.85:3128"
+        },
+        {
+            "username": "",
+            "authData": "",
+            "proxy": "156.221.140:3128"
+        }
+    ]
+}
