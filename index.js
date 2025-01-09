@@ -16,6 +16,20 @@ const MOBILE_USER_AGENTS = [
     'Mozilla/5.0 (Linux; Android 12; moto g(60)) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36'
 ];
 
+const logTypes = {
+    'Contribution Success': chalk.yellow('Contribution Success'),
+    'Current Profile Status': chalk.green('Current Profile Status'),
+    'Processing account': chalk.magenta('Processing account'),
+    'Setting up proxy': chalk.cyan('Setting up proxy'),
+    'Authentication Successful': chalk.green('Authentication Successful'),
+    'Initiating contribution request': chalk.blue('Initiating contribution request'),
+    'Session ID Generated': chalk.cyan('Session ID Generated'),
+    'Contribution Starting': chalk.blue('Contribution Starting'),
+    'Power Status': chalk.green('Power Status'),
+    'API Response': chalk.yellow('API Response'),
+    'Waiting Period': chalk.magenta('Waiting Period')
+};
+
 const logger = winston.createLogger({
     level: 'debug',
     format: winston.format.printf(({ level, message, ...metadata }) => {
@@ -25,25 +39,14 @@ const logger = winston.createLogger({
         let metadataStr = '';
         if (Object.keys(metadata).length) {
             metadataStr = Object.entries(metadata)
-                .map(([key, value]) => `[ ${key}: ${value} ]`)
+                .map(([key, value]) => {
+                    if (typeof value === 'object') {
+                        return `[ ${key}: ${JSON.stringify(value)} ]`;
+                    }
+                    return `[ ${key}: ${value} ]`;
+                })
                 .join(' ');
         }
-
-        const colors = {
-            info: chalk.green,
-            warn: chalk.yellow,
-            error: chalk.red,
-            debug: chalk.blue
-        };
-
-        const logTypes = {
-            'Contribution Success': chalk.yellow('Contribution Success'),
-            'Current Profile Status': chalk.green('Current Profile Status'),
-            'Processing account': chalk.magenta('Processing account'),
-            'Setting up proxy': chalk.cyan('Setting up proxy'),
-            'Authentication Successful': chalk.green('Authentication Successful'),
-            'Initiating contribution request': chalk.blue('Initiating contribution request')
-        };
 
         const coloredMessage = logTypes[message] || message;
         
@@ -121,7 +124,10 @@ class HiveraDepin {
                     'Origin': 'https://app.hivera.org',
                     'Referer': 'https://app.hivera.org/',
                     'Accept': 'application/json',
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'sec-ch-ua': '"Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"'
                 },
                 timeout: 25000
             };
@@ -164,20 +170,61 @@ class HiveraDepin {
         });
     }
 
+    async getSessionId() {
+        try {
+            const response = await axios.get(`${this.baseUrl}/engine/session`, {
+                headers: {
+                    'User-Agent': this.deviceInfo.userAgent,
+                    'Origin': 'https://app.hivera.org',
+                    'Referer': 'https://app.hivera.org/',
+                    'Accept': '*/*',
+                    'sec-ch-ua': '"Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"'
+                },
+                params: { auth_data: this.config.authData }
+            });
+
+            const sessionId = response.data.result.session_id;
+            logger.info('Session ID Generated', {
+                sessionId: sessionId,
+                username: this.config.username,
+                timestamp: moment().format('MM/DD/YY HH:mm:ss')
+            });
+
+            return sessionId;
+        } catch (error) {
+            logger.error('Failed to get session ID', {
+                errorMessage: error.message,
+                errorResponse: error.response?.data || 'No response',
+                username: this.config.username
+            });
+            throw error;
+        }
+    }
+
     async startEarning(maxRetries = 2) {
         let retries = 0;
         while (retries < maxRetries) {
             try {
+                const sessionId = await this.getSessionId();
+
                 const payload = {
                     from_date: Date.now(),
-                    quality_connection: 90 + Math.floor(Math.random() * 8),
-                    times: 4
+                    quality_connection: 90,
+                    times: 1,
+                    session_id: sessionId
                 };
 
-                logger.info('Initiating contribution request', { payload });
+                logger.info('Contribution Starting', {
+                    username: this.config.username,
+                    sessionId: sessionId,
+                    timestamp: moment().format('MM/DD/YY HH:mm:ss'),
+                    payload: payload
+                });
 
                 const response = await axios.post(
-                    `${this.baseUrl}/v2/engine/contribute`, 
+                    `${this.baseUrl}/v2/engine/contribute`,
                     payload,
                     {
                         headers: {
@@ -185,19 +232,30 @@ class HiveraDepin {
                             'Origin': 'https://app.hivera.org',
                             'Referer': 'https://app.hivera.org/',
                             'Accept': 'application/json',
-                            'Content-Type': 'application/json'
+                            'Content-Type': 'application/json',
+                            'sec-ch-ua': '"Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                            'sec-ch-ua-mobile': '?0',
+                            'sec-ch-ua-platform': '"Windows"'
                         },
-                        params: { auth_data: this.config.authData },
-                        timeout: 25000
+                        params: { auth_data: this.config.authData }
                     }
                 );
 
                 const result = response.data.result;
-                
+            
                 logger.info('Contribution Success', {
                     username: this.config.username,
+                    sessionId: sessionId,
                     newBalance: result.profile.HIVERA,
-                    powerStatus: `${result.profile.POWER}/${result.profile.POWER_CAPACITY}`
+                    powerStatus: `${result.profile.POWER}/${result.profile.POWER_CAPACITY}`,
+                    timestamp: moment().format('MM/DD/YY HH:mm:ss')
+                });
+
+                logger.info('API Response', {
+                    username: this.config.username,
+                    sessionId: sessionId,
+                    response: result,
+                    timestamp: moment().format('MM/DD/YY HH:mm:ss')
                 });
 
                 this.displayProfile(result.profile);
@@ -205,15 +263,21 @@ class HiveraDepin {
 
             } catch (error) {
                 if (error.response?.data?.error === 'insufficient power') {
-                    logger.warn(`Insufficient power for account: ${this.config.username}`);
+                    logger.warn('Insufficient Power', {
+                        username: this.config.username,
+                        error: 'insufficient power',
+                        timestamp: moment().format('MM/DD/YY HH:mm:ss')
+                    });
                     throw new Error('insufficient power');
                 }
 
                 logger.error(`Contribution Failed (Attempt ${retries + 1})`, {
+                    username: this.config.username,
                     errorMessage: error.message,
-                    errorResponse: error.response?.data || 'No response'
+                    errorResponse: error.response?.data || 'No response',
+                    timestamp: moment().format('MM/DD/YY HH:mm:ss')
                 });
-                
+            
                 retries++;
                 await this.sleep(5000);
             }
